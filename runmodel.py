@@ -74,8 +74,10 @@ class ModelRunThread(Process):
             # run the model and get data back
             outputdata, manyruns = runmodel(*params)
             # send model data to file writing queues
-            outputQueue.put(manyruns)
-            alldataQueue.put(outputdata)
+            for line in outputdata:
+                outputQueue.put(line)
+            for line in manyruns:
+                alldataQueue.put(line)
             # tell queue job is done
             self.queue.task_done()
 
@@ -112,7 +114,7 @@ if __name__ == '__main__':
     alldataQueue = JoinableQueue()
 
     # generate all necessary parameter range combinations
-    # define ranges
+    # define rangeshead -1
     print "generating parameter rangers"
     r_nbees = np.linspace(1, 101, 3)
     r_attr_inf = np.linspace(0.7, 0.9, 3)
