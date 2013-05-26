@@ -6,10 +6,6 @@
 import csv  # for data output
 import scipy  # for summary statistics in data output
 from scipy import stats  # as above
-import itertools  # to generate all parameter combinations
-import numpy as np  # for generating decimal ranges of parameters
-from multiprocessing import Process, JoinableQueue  # for threaded running of parameter sweep
-import sys  # for taking number of threads as command line arg
 from model.pollination import PollinationSeason
 from model.reproduction import Reproduction
 
@@ -59,100 +55,13 @@ def runmodel(nbees, attr_inf, inf_penalty, nb_penalty, nb_inf_penalty):
     return outputdata, manyruns
 
 
-class ModelRunThread(Process):
-    """Threaded run of the model"""
-    def __init__(self, queue):
-        Process.__init__(self)
-        self.queue = queue
-
-    def run(self):
-        while True:
-            # grab parameters from queue
-            params = self.queue.get()
-            print "running model with params: "
-            print params
-            # run the model and get data back
-            outputdata, manyruns = runmodel(*params)
-            # send model data to file writing queues
-            for line in outputdata:
-                outputQueue.put(line)
-            for line in manyruns:
-                alldataQueue.put(line)
-            # tell queue job is done
-            self.queue.task_done()
-
-
-class DataWritethread(Process):
-    """Thread for writing from queue to a single file"""
-    def __init__(self, queue, filename, headers=None):
-        Process.__init__(self)
-        self.queue = queue
-        self.filename = filename
-        self.headers = headers
-
-    def run(self):
-        with open(self.filename, 'wb') as outfile:
-            outcsv = csv.writer(outfile, delimiter=',', quotechar='"', quoting=csv.QUOTE_MINIMAL)
-            if self.headers is not None:
-                outcsv.writerow(self.headers)
-            while True:
-                # grab data from queue
-                data = self.queue.get()
-                # write to file
-                outcsv.writerow([x for x in data])
-
-
 if __name__ == '__main__':
-    nthreads = int(sys.argv[1])  # number of threads to use
-    print str(nthreads)
-
-    # queue for threads to draw sets of parameters from
-    parameterQueue = JoinableQueue()
-
-    # queues for writing data to files
-    outputQueue = JoinableQueue()
-    alldataQueue = JoinableQueue()
-
-    # generate all necessary parameter range combinations
-    # define rangeshead -1
-    print "generating parameter rangers"
-    r_nbees = np.linspace(1, 101, 3)
-    r_attr_inf = np.linspace(0.7, 0.9, 3)
-    r_inf_penalty = np.linspace(0, 1, 3)
-    r_nb_penalty = np.linspace(0, 1, 3)
-    r_nb_inf_penalty = np.linspace(0, 0.5, 3)
-    # generate combinations
-    ranges = [r_nbees, r_attr_inf, r_inf_penalty, r_nb_penalty, r_nb_inf_penalty]
-    params = [x for x in itertools.product(*ranges)]
-    print str(len(params)) + " parameter sets will be run"
-
-    # spawn data output threads
-    print "spawning threads"
-    threads = []
-    mainheaders = ['nbees', 'attr_inf', 'inf_penalty', 'nb_penalty', 'nb_inf_penalty', 'season', 'population', 'mean', 'std', 'sem']
-    d = DataWritethread(outputQueue, 'parameter_sweep.csv', headers=mainheaders)
-    a = DataWritethread(alldataQueue, 'allmodeldata.csv')
-    for t in [d, a]:
-        t.daemon = True
-        t.start()
-        threads.append(t)
-
-    # spawn model threads
-    for i in range(nthreads):
-        t = ModelRunThread(parameterQueue)
-        t.daemon = True
-        t.start()
-        threads.append(t)
-
-    # populate parameter queue with data
-    print "running..."
-    for paramset in params:
-        parameterQueue.put(paramset)
-
-    # wait until all queues have been processed
-    for t in threads:
-        t.join()
-    parameterQueue.join()
-    outputQueue.join()
-    alldataQueue.join()
-    print "done!"
+    defaults = {'nbees': 10, 'attr_inf': 0.81, 'inf_penalty': 0.36,
+                'nb_penalty': 0.74, 'nb_inf_penalty': 0.09}
+    keyorder = ['nbees', 'attr_inf', 'inf_penalty', 'nb_penalty', 'nb_inf_penalty']
+    params = [defaults[x] for x in keyorder]
+    outputdata, manyruns = runmodel(*params)
+    with open('default_500_seasons.csv', 'wb') as outfile:
+        outcsv = csv.writer(outfile, delimiter=',', quotechar='"', quoting=csv.QUOTE_MINIMAL)
+        for x in outputdata:
+            outcsv.writerow(x)

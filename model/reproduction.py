@@ -75,6 +75,10 @@ class Reproduction(object):
         else:
             selfcount = count * self.non_buzz_penalty
             if infected:
+                # NOTE: infected mother penalty currently does not
+                # apply when calculating non-buzzed seed numbers...
+                # perhaps we need to apply the maternal penalty first?
+                # or does the non-buzz-infected-penalty already account for that?
                 selfcount = selfcount * self.non_buzz_infected_penalty
             return selfcount
 
