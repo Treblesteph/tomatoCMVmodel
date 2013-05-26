@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/python
 # run CMV model varying major assumptive parameters
 # usage: runmodel.py [nthreads]
 # example: runmodel.py 10
@@ -8,9 +8,8 @@ import scipy  # for summary statistics in data output
 from scipy import stats  # as above
 import itertools  # to generate all parameter combinations
 import numpy as np  # for generating decimal ranges of parameters
-import threading  # for threaded running of parameter sweep
+from multiprocessing import Process, JoinableQueue  # for threaded running of parameter sweep
 import sys  # for taking number of threads as command line arg
-from multiprocessing import Queue  # as previous
 from model.pollination import PollinationSeason
 from model.reproduction import Reproduction
 
@@ -26,19 +25,18 @@ def runmodel(nbees, attr_inf, inf_penalty, nb_penalty, nb_inf_penalty):
     p = r = None
     for i in range(y):
         # do repeats
-        print 'run: ' + str(i + 1)
         for j in range(1, x+1):
             # create pollination season model
             p = PollinationSeason(plant_populations=plantpops,
-                                  number_of_bees=nbees,
-                                  attraction=attr_inf)
+                                  number_of_bees=int(nbees),
+                                  attraction=float(attr_inf))
             # run pollination season
             pres = p.runOneSeason()
             # create reproduction model
             r = Reproduction(*pres,
-                             infected_penalty=inf_penalty,
-                             non_buzz_penalty=nb_penalty,
-                             non_buzz_infected_penalty=nb_inf_penalty)
+                             infected_penalty=float(inf_penalty),
+                             non_buzz_penalty=float(nb_penalty),
+                             non_buzz_infected_penalty=float(nb_inf_penalty))
             # run reproduction
             plantpops = r.generatePlantPop()
             # save the data
@@ -61,16 +59,18 @@ def runmodel(nbees, attr_inf, inf_penalty, nb_penalty, nb_inf_penalty):
     return outputdata, manyruns
 
 
-class ModelRunThread(threading.Thread):
+class ModelRunThread(Process):
     """Threaded run of the model"""
     def __init__(self, queue):
-        threading.Thread.__init__(self)
+        Process.__init__(self)
         self.queue = queue
 
     def run(self):
         while True:
             # grab parameters from queue
             params = self.queue.get()
+            print "running model with params: "
+            print params
             # run the model and get data back
             outputdata, manyruns = runmodel(*params)
             # send model data to file writing queues
@@ -80,10 +80,10 @@ class ModelRunThread(threading.Thread):
             self.queue.task_done()
 
 
-class DataWritethread(threading.Thread):
+class DataWritethread(Process):
     """Thread for writing from queue to a single file"""
     def __init__(self, queue, filename, headers=None):
-        threading.Thead.__init__(self)
+        Process.__init__(self)
         self.queue = queue
         self.filename = filename
         self.headers = headers
@@ -97,49 +97,60 @@ class DataWritethread(threading.Thread):
                 # grab data from queue
                 data = self.queue.get()
                 # write to file
-                outcsv.writerow(data)
+                outcsv.writerow([x for x in data])
 
 
-# queue for threads to draw sets of parameters from
-parameterQueue = Queue.Queue()
+if __name__ == '__main__':
+    nthreads = int(sys.argv[1])  # number of threads to use
+    print str(nthreads)
 
-# queues for writing data to files
-outputQueue = Queue.Queue()
-alldataQueue = Queue.Queue()
+    # queue for threads to draw sets of parameters from
+    parameterQueue = JoinableQueue()
 
+    # queues for writing data to files
+    outputQueue = JoinableQueue()
+    alldataQueue = JoinableQueue()
 
-def main():
-    nthreads = sys.argv[1]  # number of threads to use
     # generate all necessary parameter range combinations
     # define ranges
-    r_nbees = np.arange(1, 101, 50)
-    r_attr_inf = np.arange(0.5, 1.0, 0.25)
-    r_inf_penalty = np.arange(0, 1, 0.5)
-    r_nb_penalty = np.arange(0, 1, 0.5)
-    r_nb_inf_penalty = np.arange(0, 0.5, 0.25)
+    print "generating parameter rangers"
+    r_nbees = np.linspace(1, 101, 3)
+    r_attr_inf = np.linspace(0.7, 0.9, 3)
+    r_inf_penalty = np.linspace(0, 1, 3)
+    r_nb_penalty = np.linspace(0, 1, 3)
+    r_nb_inf_penalty = np.linspace(0, 0.5, 3)
     # generate combinations
     ranges = [r_nbees, r_attr_inf, r_inf_penalty, r_nb_penalty, r_nb_inf_penalty]
     params = [x for x in itertools.product(*ranges)]
+    print str(len(params)) + " parameter sets will be run"
 
     # spawn data output threads
+    print "spawning threads"
+    threads = []
     mainheaders = ['nbees', 'attr_inf', 'inf_penalty', 'nb_penalty', 'nb_inf_penalty', 'season', 'population', 'mean', 'std', 'sem']
-    d = DataWritethread(outputQueue, 'parameter_sweep.csv', mainheaders)
+    d = DataWritethread(outputQueue, 'parameter_sweep.csv', headers=mainheaders)
     a = DataWritethread(alldataQueue, 'allmodeldata.csv')
     for t in [d, a]:
-        t.setDaemon(True)
+        t.daemon = True
         t.start()
+        threads.append(t)
 
     # spawn model threads
     for i in range(nthreads):
         t = ModelRunThread(parameterQueue)
-        t.setDaemon(True)
+        t.daemon = True
         t.start()
+        threads.append(t)
 
     # populate parameter queue with data
+    print "running..."
     for paramset in params:
         parameterQueue.put(paramset)
 
     # wait until all queues have been processed
+    for t in threads:
+        t.join()
     parameterQueue.join()
     outputQueue.join()
     alldataQueue.join()
+    print "done!"
